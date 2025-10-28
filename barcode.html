@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" href="data:,">
+  <title>AuthCheck — Single-file Barcode Verification DApp</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- ethers.js (v5) -->
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+
+  <!--
+  --------------------------------------------------------------------
+  Solidity contract (copy this to Remix and deploy):
+  --------------------------------------------------------------------
+  // SPDX-License-Identifier: GPL-3.0
+
+pragma solidity >=0.7.0 <0.9.0;
+
+/// @title Simple Product Registry for Barcode Authenticity (Beginner-friendly)
+/// @author You
+/// @notice Very small contract to add and verify products by barcode
+contract ProductRegistry {
+    struct Product {
+        string name;
+        string brand;
+        string barcode;
+        bool verified;     // set true when added by owner
+        address addedBy;
+    }
+
+    // barcode -> Product
+    mapping(string => Product) private products;
+
+    // Array to keep track of all barcodes
+    string[] private allBarcodes;
+
+    // emitted when owner adds a product
+    event ProductAdded(string indexed barcode, string name, string brand, address indexed addedBy);
+
+    /// @notice Add a product (marks it as verified/genuine)
+    /// @dev This is very simple: anyone can add in this example. You can restrict to owner later.
+    function addProduct(string memory _name, string memory _brand, string memory _barcode) public {
+        // require that barcode not empty
+        require(bytes(_barcode).length > 0, "Barcode required");
+        // If product already added, overwrite (simple behavior)
+        products[_barcode] = Product({
+            name: _name,
+            brand: _brand,
+            barcode: _barcode,
+            verified: true,
+            addedBy: msg.sender
+        });
+
+        // ✅ store barcode for later retrieval
+        allBarcodes.push(_barcode);
+
+        emit ProductAdded(_barcode, _name, _brand, msg.sender);
+    }
+
+    /// @notice Verify a product by barcode
+    /// @return exists whether product is present
+    /// @return name the product name (empty if not present)
+    /// @return brand the brand (empty if not present)
+    /// @return addedBy address who added it
+    function verifyProduct(string memory _barcode) public view returns (bool exists, string memory name, string memory brand, address addedBy) {
+        Product storage p = products[_barcode];
+        if (p.verified) {
+            return (true, p.name, p.brand, p.addedBy);
+        } else {
+            return (false, "", "", address(0));
+        }
+    }
+
+    /// @notice Returns all products added so far
+    /// @dev Easy way for frontend to fetch and display all products
+    function getAllProducts() public view returns (Product[] memory) {
+        uint total = allBarcodes.length;
+        Product[] memory result = new Product[](total);
+
+        for (uint i = 0; i < total; i++) {
+            result[i] = products[allBarcodes[i]];
+        }
+        return result;
+    }
+
+    // Inside ProductRegistry contract, below existing mappings/structs:
+
+// New mapping to store approvals
+mapping(string => uint) public approvals;
+
+// New event for approvals
+event ProductApproved(string indexed barcode, address indexed approvedBy);
+
+// New function to approve a product
+function approveProduct(string memory _barcode) public {
+    require(bytes(_barcode).length > 0, "Barcode required");
+    require(products[_barcode].verified, "Product not verified yet");
+
+    approvals[_barcode] += 1;
+
+    emit ProductApproved(_barcode, msg.sender);
+}
+
+
+}
+
+
+  --------------------------------------------------------------------
+  After deploying, copy the deployed address and replace the placeholder
+  value for `contractAddress` in the JavaScript below.
+  --------------------------------------------------------------------
+  -->
+
+  <style> 
+    :root {
+  --bg: #fff;
+  --text: #111;
+  --muted: #6b7280;
+  --accent: #0b78d1;
+  --card: #f7f9fb;
+  --shadow: rgba(15,23,42,0.06);
+  --radius: 10px;
+  font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* { box-sizing: border-box; }
+
+.container { max-width: 980px; margin: 0 auto; padding: 18px; }
+
+/* 🧭 Header */
+.site-header {
+  background: linear-gradient(90deg,#fff 0%,#fbfdff 100%);
+  border-bottom: 1px solid #eee;
+}
+.header-inner { display: flex; gap: 12px; align-items: center; }
+.brand h1 { margin: 0; font-size: 20px; }
+.brand p { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* 🧭 Navigation */
+.main-nav { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.nav-btn {
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  cursor: pointer;
+  border-radius: 8px;
+  font-size: 14px;
+  color: #392f2f;
+  transition: 0.2s;
+}
+.nav-btn:hover { background: #f1f6fb; }
+
+/* 👛 Wallet */
+.wallet {
+  position: absolute;
+  top: 16px;
+  right: 18px;
+  text-align: right;
+}
+#connect, #wallet button {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: 0.2s;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+}
+#connect:hover, #wallet button:hover {
+  background: #0965b1;
+  transform: scale(1.05);
+}
+#who { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+/* 🌙 Theme Toggle */
+#themeToggle {
+  position: fixed;
+  right: 22px;
+  top: 80px;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  background: radial-gradient(circle at top left,#f5deb3,#d2b48c);
+  color: #4b3b2e;
+  font-size: 17px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: 0.3s;
+  z-index: 50;
+}
+#themeToggle:hover { transform: scale(1.1); filter: brightness(1.1); }
+
+/* 🌑 Dark Mode */
+body.dark {
+  --bg: #0d1117;
+  --card: #161b22;
+  --accent: #58a6ff;
+  --muted: #c9d1d9;
+  --text: #c9d1d9;
+  --shadow: rgba(88,166,255,0.15);
+  background: var(--bg);
+  color: var(--text);
+  transition: 0.4s;
+}
+body.dark #themeToggle {
+  background: radial-gradient(circle at bottom right,#1e2538,#101520);
+  color: #f4f4f4;
+  box-shadow: 0 0 10px rgba(88,166,255,0.5);
+}
+body.dark header, body.dark .navbar {
+  background: var(--card);
+  color: var(--text);
+}
+
+/* 📦 Product Cards */
+#productList {
+  display: grid;
+  grid-template-columns: repeat(auto-fit,minmax(220px,1fr));
+  gap: 15px;
+  margin-top: 10px;
+  padding: 10px 0;
+}
+.product-card {
+  background: #fff;
+  border-radius: 14px;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.08);
+  padding: 14px;
+  text-align: left;
+  transition: 0.2s;
+}
+.product-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 6px 10px rgba(0,0,0,0.15);
+}
+.product-card strong { font-size: 16px; color: #111; }
+.product-card small {
+  display: block;
+  color: #666;
+  margin-top: 4px;
+  font-size: 13px;
+}
+
+/* 📄 Cards, Forms, Buttons */
+.card {
+  background: var(--card);
+  padding: 16px;
+  border-radius: var(--radius);
+  box-shadow: 0 8px 20px var(--shadow);
+  margin-top: 12px;
+}
+label { display: block; font-weight: 600; margin-top: 10px; font-size: 13px; }
+input {
+  width: 100%;
+  padding: 10px;
+  margin-top: 6px;
+  border-radius: 8px;
+  border: 1px solid #e6eef7;
+  font-size: 14px;
+  background: #fff;
+}
+button {
+  margin-top: 12px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  padding: 10px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: 0.2s;
+}
+button.secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid rgba(11,120,209,0.12);
+}
+.status { margin-top: 10px; color: #1f6c1f; }
+.verify-result {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #e9f2ff;
+}
+
+/* 🧩 Layout */
+.main { padding-top: 20px; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+h3 {
+  font-family: Poppins, sans-serif;
+  color: #333;
+  margin-top: 30px;
+  text-align: center;
+}
+
+/* ⚙️ Footer */
+.site-footer {
+  text-align: center;
+  padding: 18px 0;
+  color: var(--muted);
+  border-top: 1px solid #eee;
+  margin-top: 26px;
+}
+
+/* 📱 Responsive */
+@media (max-width:700px){
+  .header-inner { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .main-nav { width: 100%; justify-content: center; }
+}
+</style>
+
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <div class="container header-inner">
+      <div class="brand">
+        <h1>AuthCheck</h1>
+        <p class="tag">Verify product authenticity by barcode</p>
+      </div>
+
+    <nav class="main-nav" aria-label="Main navigation">
+        <button class="nav-btn" data-target="add">Add Product</button>
+        <button class="nav-btn" data-target="verify">Verify Product</button>
+        <button class="nav-btn" data-target="about">About</button>
+        <button class="nav-btn" data-target="profile">Profile</button>
+    </nav>
+
+
+      <div class="wallet">
+        <button id="connect">Connect Wallet</button>
+        <p id="who" class="who">Not connected</p>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main" role="main">
+    <!-- Add Product -->
+    <section id="add" class="panel active" aria-labelledby="add-title">
+      <h2 id="add-title">Add Product</h2>
+      <p>Register a product as authentic by entering its details and barcode.</p>
+      <div class="card">
+        <label for="p_name">Product Name</label>
+        <input id="p_name" placeholder="e.g., Classic Watch" />
+
+        <label for="p_brand">Brand</label>
+        <input id="p_brand" placeholder="e.g., TimeCo" />
+
+        <label for="p_barcode">Barcode / Serial</label>
+        <input id="p_barcode" placeholder="e.g., AB123456" />
+
+        <button id="addProductBtn">Add Product</button>
+        <p id="addStatus" class="status" aria-live="polite"></p>
+      </div>
+
+<!-- Added Products -->
+<h3>Added Products</h3>
+<div id="productList" class="product-list">
+  <div class="card search-panel">
+  <h3>Search Products</h3>
+  <input id="searchBox" placeholder="Search by name, brand, or barcode" />
+  <button id="searchBtn">Search</button>
+</div>
+
+</div>
+
+    </section>
+
+    <button id="themeToggle" title="Toggle theme">🌙</button>
+
+    <!-- Verify Product -->
+    <section id="verify" class="panel" aria-labelledby="verify-title">
+      <h2 id="verify-title">Verify Product</h2>
+      <p>Type a barcode to check authenticity.</p>
+      <div class="card">
+        <label for="v_barcode">Barcode / Serial</label>
+        <input id="v_barcode" placeholder="Enter barcode or serial number" />
+        <button id="verifyBtn">Check Authenticity</button>
+        <div id="verifyResult" class="verify-result" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <!-- About -->
+    <section id="about" class="panel" aria-labelledby="about-title">
+      <h2 id="about-title">About</h2>
+      <div class="card">
+        <p>This is a demo, beginner-friendly DApp inspired by the look & feel of trusted-style authenticity pages. It uses a very small Solidity contract to store product entries and ethers.js to interact with it from your browser.</p>
+      </div>
+    </section>
+
+    <!-- Profile -->
+    <section id="profile" class="panel" aria-labelledby="profile-title">
+      <h2 id="profile-title">Profile</h2>
+      <div class="card">
+        <p>Connected account: <strong id="profileAddr">Not connected</strong></p>
+        <p>Products you add will be stored on-chain (in this demo anyone can add). To restrict adds to only an owner account you can add access control to the Solidity contract.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="container">
+      <small>© AuthCheck — Demo</small>
+    </div>
+  </footer>
+
+  <script>
+    const contractAddress = "0x53ba48b75f8e2ddb87a27a462d3bec60e060ab7d";
+    const abi =[
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "string",
+				"name": "barcode",
+				"type": "string"
+			},
+			{
+				"indexed": false,
+				"internalType": "string",
+				"name": "name",
+				"type": "string"
+			},
+			{
+				"indexed": false,
+				"internalType": "string",
+				"name": "brand",
+				"type": "string"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "addedBy",
+				"type": "address"
+			}
+		],
+		"name": "ProductAdded",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "string",
+				"name": "barcode",
+				"type": "string"
+			},
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "approvedBy",
+				"type": "address"
+			}
+		],
+		"name": "ProductApproved",
+		"type": "event"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "_name",
+				"type": "string"
+			},
+			{
+				"internalType": "string",
+				"name": "_brand",
+				"type": "string"
+			},
+			{
+				"internalType": "string",
+				"name": "_barcode",
+				"type": "string"
+			}
+		],
+		"name": "addProduct",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "",
+				"type": "string"
+			}
+		],
+		"name": "approvals",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "_barcode",
+				"type": "string"
+			}
+		],
+		"name": "approveProduct",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "getAllProducts",
+		"outputs": [
+			{
+				"components": [
+					{
+						"internalType": "string",
+						"name": "name",
+						"type": "string"
+					},
+					{
+						"internalType": "string",
+						"name": "brand",
+						"type": "string"
+					},
+					{
+						"internalType": "string",
+						"name": "barcode",
+						"type": "string"
+					},
+					{
+						"internalType": "bool",
+						"name": "verified",
+						"type": "bool"
+					},
+					{
+						"internalType": "address",
+						"name": "addedBy",
+						"type": "address"
+					}
+				],
+				"internalType": "struct ProductRegistry.Product[]",
+				"name": "",
+				"type": "tuple[]"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "_barcode",
+				"type": "string"
+			}
+		],
+		"name": "verifyProduct",
+		"outputs": [
+			{
+				"internalType": "bool",
+				"name": "exists",
+				"type": "bool"
+			},
+			{
+				"internalType": "string",
+				"name": "name",
+				"type": "string"
+			},
+			{
+				"internalType": "string",
+				"name": "brand",
+				"type": "string"
+			},
+			{
+				"internalType": "address",
+				"name": "addedBy",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	}
+];
+
+    let provider, signer, contract;
+
+
+// 🪙 Connect MetaMask wallet
+async function connect() {
+  if (!window.ethereum) {
+    alert("Please install MetaMask!");
+    return;
+  }
+
+  await window.ethereum.request({ method: "eth_requestAccounts" });
+  provider = new ethers.providers.Web3Provider(window.ethereum);
+  signer = provider.getSigner();
+  contract = new ethers.Contract(contractAddress, abi, signer);
+
+  const addr = await signer.getAddress();
+  const shortAddr = addr.slice(0, 6) + "..." + addr.slice(-4);
+  document.getElementById("who").innerText = "Connected: " + shortAddr;
+  document.getElementById("profileAddr").innerText = shortAddr;
+  loadAllProducts(); //new
+}
+
+// ➕ Add Product
+async function addProduct() {
+  if (!contract) {
+    alert("Please connect wallet first!");
+    return;
+  }
+
+  const name = document.getElementById("p_name").value;
+  const brand = document.getElementById("p_brand").value;
+  const barcode = document.getElementById("p_barcode").value;
+
+  if (barcode === "") {
+    alert("Please enter a barcode.");
+    return;
+  }
+
+  document.getElementById("addStatus").innerText = "Sending transaction - confirm in MetaMask...";
+
+  try {
+    const tx = await contract.addProduct(name, brand, barcode);
+    await tx.wait();
+    document.getElementById("addStatus").innerText = "Product added and marked authentic! (" + barcode + ")";
+    showAddedProduct(name, brand, barcode);
+  } catch (e) {
+    document.getElementById("addStatus").innerText = "Error: " + e.message;
+  }
+}
+
+
+// 🧩 Safe HTML escaping helper
+function escapeHtml(unsafe) {
+  if (!unsafe) return "";
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+
+// 🧾 Show Added Products 
+function showAddedProduct(name, brand, barcode) {
+  const list = document.getElementById("productList");
+
+  const item = document.createElement("div");
+  item.className = "product-card";
+  item.innerHTML = `
+    <strong>${escapeHtml(name)}</strong>
+    <small>Brand: ${escapeHtml(brand)}</small>
+    <small>Barcode: ${escapeHtml(barcode)}</small>
+    <small>Approvals: <span id="approvals-${barcode}">0</span></small>
+    <button onclick="approveProduct('${barcode}')">👍 Approve</button>
+  `;
+
+  list.prepend(item);
+  updateApprovalCount(barcode);
+}
+
+//new
+async function approveProduct(barcode) {
+  if (!contract) {
+    alert("Please connect wallet first!");
+    return;
+  }
+
+  try {
+    const tx = await contract.approveProduct(barcode);
+    await tx.wait();
+    alert("You approved this product!");
+    updateApprovalCount(barcode);
+  } catch (e) {
+    alert("Error: " + e.message);
+  }
+}
+
+// Load current approvals
+async function updateApprovalCount(barcode) {
+  const count = await contract.approvals(barcode);
+  const el = document.getElementById(`approvals-${barcode}`);
+  if (el) el.innerText = count.toString();
+}
+
+
+
+async function loadAllProducts() {
+  if (!contract) return;
+
+  const allProducts = await contract.getAllProducts();
+  const list = document.getElementById("productList");
+  list.innerHTML = ""; // clear existing list
+
+  for (let p of allProducts) {
+    showAddedProduct(p.name, p.brand, p.barcode);
+  }
+}
+
+
+
+
+// 🔍 Verify Product
+async function verifyProduct() {
+  if (!contract) {
+    alert("Please connect wallet first!");
+    return;
+  }
+
+  const barcode = document.getElementById("v_barcode").value;
+  if (barcode === "") {
+    alert("Please enter a barcode to check!");
+    return;
+  }
+
+  document.getElementById("verifyResult").innerText = "Checking...";
+
+  try {
+    const result = await contract.verifyProduct(barcode);
+    const exists = result[0];
+    const name = result[1];
+    const brand = result[2];
+    const addedBy = result[3];
+
+    if (exists) {
+      document.getElementById("verifyResult").innerHTML =
+        `<strong style="color:green">Authentic ✔</strong><br/>
+             <strong>Name:</strong> ${escapeHtml(name) || "-"}<br/>
+             <strong>Brand:</strong> ${escapeHtml(brand) || "-"}<br/>
+             <strong>Added by:</strong> ${(addedBy)}`;
+    } else {
+      document.getElementById("verifyResult").innerHTML =
+        `<strong style="color:#b91c1c">Not found / Unverified ✖</strong><br/>This barcode is not in the registry.`;
+    }
+  } catch (e) {
+    document.getElementById("verifyResult").innerText = "Error: " + e.message;
+  }
+}
+
+// 🔁 Page switching (manual and simple)
+function showPage(id) {
+  const pages = document.getElementsByClassName("panel");
+  for (let i = 0; i < pages.length; i++) {
+    pages[i].classList.remove("active");
+  }
+  document.getElementById(id).classList.add("active");
+}
+
+
+// theme toggle
+const themeBtn = document.getElementById("themeToggle");
+themeBtn.addEventListener("click", () => {
+  document.body.classList.toggle("dark");
+  themeBtn.innerText = document.body.classList.contains("dark") ? "☀️" : "🌙";
+});
+
+
+
+// 🎛 Connect buttons
+window.onload = function() {
+  document.getElementById("connect").onclick = connect;
+  document.getElementById("addProductBtn").onclick = addProduct;
+  document.getElementById("verifyBtn").onclick = verifyProduct;
+
+  // Manual navigation buttons (in order as in your navbar)
+  document.getElementsByClassName("nav-btn")[0].onclick = function() { showPage("add"); };
+  document.getElementsByClassName("nav-btn")[1].onclick = function() { showPage("verify"); };
+  document.getElementsByClassName("nav-btn")[2].onclick = function() { showPage("about"); };
+  document.getElementsByClassName("nav-btn")[3].onclick = function() { showPage("profile"); };
+};
+</script>
+</body>
+</html>
